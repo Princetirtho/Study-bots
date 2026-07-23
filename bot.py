@@ -27,7 +27,8 @@ from telegram.error import TelegramError
 from telegram.request import HTTPXRequest
 
 # ==================== কনফিগারেশন ====================
-BOT_TOKEN = "YOUR_BOT_TOKEN"  # আপনার টোকেন দিন
+
+BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")  # আপনার টোকেন দিন
 ADMIN_ID = 8659434858  # আপনার আইডি দিন
 
 # ফিক্সড গ্রুপ/চ্যানেল নেই, সব ডাটাবেজ থেকে ম্যানেজ হবে
