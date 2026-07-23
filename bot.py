@@ -28,18 +28,32 @@ from telegram.ext import (
 from telegram.error import TelegramError
 from telegram.request import HTTPXRequest
 
-# ==================== কনফিগারেশন ====================
-# Render Environment Variable থেকে টোকেন নেওয়ার ব্যবস্থা (অথবা সরাসরি দিতে পারেন)
-BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")  # আপনার টোকেন দিন
-ADMIN_ID = 8212595643  # আপনার আইডি দিন
+# ==================== ডামি ওয়েয়ব সার্ভার ( Render/UptimeRobot এর জন্য ) ====================
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running successfully!")
 
-# ফিক্সড গ্রুপ/চ্যানেল নেই, সব ডাটাবেজ থেকে ম্যানেজ হবে
+    def log_message(self, format, *args):
+        return  # কনসোলে ডামি সার্ভারের লগ বন্ধ রাখার জন্য
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler)
+    print(f"🌐 Web Server started on port {port} for UptimeRobot pings.")
+    server.serve_forever()
+
+# ==================== কনফিগারেশন ====================
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN")  # Render Environment Variable থেকে টোকেন নেবে
+ADMIN_ID = 8212595643  # আপনার আইডি
+
 REQUIRED_GROUPS = [
     "https://t.me/STUDY_ROOM_OFFICIAL",
     "https://t.me/STUDY_ROOM_PAID",
     "https://t.me/STUDY_ROOM_FREE",
     "https://t.me/STUDY_ROOM_DISCUSSION"
-]  # শুধু ডাটাবেজ সিড করার জন্য ব্যবহার করছি
+]
 
 TEST_MODE = True  
 BD_TZ = pytz.timezone('Asia/Dhaka')
@@ -51,18 +65,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 DB_NAME = "study_room.db"
-
-# ==================== Render Dummy Port Server ====================
-class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is alive!")
-
-def run_dummy_server():
-    port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler)
-    server.serve_forever()
 
 # ==================== ডেটাবেজ সেটআপ ====================
 async def init_db(application: Application):
@@ -1258,8 +1260,8 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
 # ==================== মূল প্রোগ্রাম (MAIN) ====================
 def main():
-    # Render-এর Web Service পোর্ট সচল রাখার জন্য ডামি ব্যাকগ্রাউন্ড থ্রেড
-    threading.Thread(target=run_dummy_server, daemon=True).start()
+    # 🌐 Background Web Server
+    threading.Thread(target=run_web_server, daemon=True).start()
 
     request = HTTPXRequest(
         connection_pool_size=8,
