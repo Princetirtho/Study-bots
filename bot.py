@@ -4,6 +4,8 @@ import aiosqlite
 import os
 import re
 import html
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 import pytz
 from telegram import (
@@ -27,9 +29,9 @@ from telegram.error import TelegramError
 from telegram.request import HTTPXRequest
 
 # ==================== কনফিগারেশন ====================
-
+# Render Environment Variable থেকে টোকেন নেওয়ার ব্যবস্থা (অথবা সরাসরি দিতে পারেন)
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")  # আপনার টোকেন দিন
-ADMIN_ID = 8659434858  # আপনার আইডি দিন
+ADMIN_ID = 8212595643  # আপনার আইডি দিন
 
 # ফিক্সড গ্রুপ/চ্যানেল নেই, সব ডাটাবেজ থেকে ম্যানেজ হবে
 REQUIRED_GROUPS = [
@@ -49,6 +51,18 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 DB_NAME = "study_room.db"
+
+# ==================== Render Dummy Port Server ====================
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is alive!")
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler)
+    server.serve_forever()
 
 # ==================== ডেটাবেজ সেটআপ ====================
 async def init_db(application: Application):
@@ -141,14 +155,11 @@ async def init_db(application: Application):
                 is_active INTEGER DEFAULT 1
             )''')
         
-        # 🔥 নতুন ৪টি গ্রুপ/চ্যানেল যোগ করছি (যদি না থাকে)
         for group_url in REQUIRED_GROUPS:
-            # ইউআরএল থেকে গ্রুপ আইডি বের করছি (শুধু ইউজনেম অংশ)
             group_username = group_url.replace("https://t.me/", "")
             if not group_username.startswith("@"):
                 group_username = "@" + group_username
                 
-            # চেক করি আগে থেকে আছে কিনা
             async with db.execute("SELECT 1 FROM required_groups WHERE group_id = ?", (group_username,)) as cursor:
                 exists = await cursor.fetchone()
                 if not exists:
@@ -175,14 +186,11 @@ async def is_super_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID
 
 async def is_user_joined(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bool:
-    """ডাটাবেজ থেকে সব অ্যাকটিভ গ্রুপ/চ্যানেল চেক করে"""
     try:
-        # ডাটাবেজ থেকে সব অ্যাকটিভ গ্রুপ/চ্যানেল নিচ্ছি
         async with aiosqlite.connect(DB_NAME) as db:
             async with db.execute("SELECT group_id FROM required_groups WHERE is_active = 1") as cursor:
                 groups = await cursor.fetchall()
         
-        # প্রতিটি গ্রুপ/চ্যানেল চেক করছি
         for (group_id,) in groups:
             try:
                 member = await context.bot.get_chat_member(chat_id=group_id, user_id=user_id)
@@ -197,15 +205,12 @@ async def is_user_joined(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bo
         return False
 
 async def send_join_verification(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """ডায়নামিকভাবে সব গ্রুপ/চ্যানেলের জয়েন বাটন তৈরি করে"""
-    # ডাটাবেজ থেকে সব অ্যাকটিভ গ্রুপ/চ্যানেল নিচ্ছি
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute("SELECT group_id FROM required_groups WHERE is_active = 1") as cursor:
             groups = await cursor.fetchall()
     
     keyboard = []
     for (group_id,) in groups:
-        # গ্রুপ আইডি থেকে ইউজনেম বের করছি (যেমন @username)
         clean_id = group_id.replace("@", "")
         keyboard.append([InlineKeyboardButton(
             f"📢 {clean_id} তে জয়েন", 
@@ -394,12 +399,10 @@ async def handle_text_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         await db.commit()
     
-    # 🔴 Mandatory Group/Channel Verification Check
     if not await is_user_joined(context, user_id):
         await send_join_verification(update, context)
         return
 
-    # 🏠 স্মার্ট মেইন মেনু নেভিগেশন
     if text == "🏠 মেইন মেনু":
         context.user_data['selected_category'] = None
         context.user_data['state'] = None
@@ -778,7 +781,6 @@ async def auto_approve_join_request(update: Update, context: ContextTypes.DEFAUL
                 except Exception as e:
                     logger.error(f"Failed to send success msg: {e}")
 
-                # 🔔 অ্যাডমিনের কাছে নোটিফিকেশন যাবে
                 admin_alert = (
                     f"🛒 <b>নতুন কোর্স জয়েন নোটিফিকেশন!</b>\n━━━━━━━━━━━━━━━━━━━━━━━\n\n"
                     f"👤 <b>ইউজার:</b> {html.escape(user.full_name)}\n"
@@ -1256,6 +1258,9 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
 # ==================== মূল প্রোগ্রাম (MAIN) ====================
 def main():
+    # Render-এর Web Service পোর্ট সচল রাখার জন্য ডামি ব্যাকগ্রাউন্ড থ্রেড
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+
     request = HTTPXRequest(
         connection_pool_size=8,
         connect_timeout=30.0,
