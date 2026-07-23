@@ -28,9 +28,7 @@ from telegram.ext import (
 from telegram.error import TelegramError
 from telegram.request import HTTPXRequest
 
-# ==================== ডামি ওয়েয়ব সার্ভার ( Render/UptimeRobot এর জন্য ) ====================
-# ==================== ডামি ওয়েয়ব সার্ভার ( Render/UptimeRobot এর জন্য ) ====================
-# ==================== ডামি ওয়েয়ব সার্ভার ( Render/UptimeRobot এর জন্য ) ====================
+# ==================== ডামি ওয়েব সার্ভার ( Render/UptimeRobot এর জন্য ) ====================
 class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -40,7 +38,8 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot is running successfully!")    def log_message(self, format, *args):
+
+    def log_message(self, format, *args):
         return  # কনসোলে ডামি সার্ভারের লগ বন্ধ রাখার জন্য
 
 def run_web_server():
