@@ -55,8 +55,7 @@ ADMIN_ID = 8212595643  # আপনার আইডি
 REQUIRED_GROUPS = [
     "https://t.me/STUDY_ROOM_OFFICIAL",
     "https://t.me/STUDY_ROOM_PAID",
-    "https://t.me/STUDY_ROOM_FREE",
-    "https://t.me/STUDY_ROOM_DISCUSSION"
+    "https://t.me/STUDY_ROOM_FREE"
 ]
 
 TEST_MODE = True  
