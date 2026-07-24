@@ -76,7 +76,7 @@ async def init_db(application: Application):
             async with aiosqlite.connect(DB_NAME) as db:
                 await db.execute("SELECT platform FROM categories LIMIT 1")
         except:
-            os.remove(DB_NAME)
+            #os.remove(DB_NAME)
             print("🔄 পুরোনো ডেটাবেজ রিফ্রেশ করা হয়েছে...")
     
     async with aiosqlite.connect(DB_NAME) as db:
