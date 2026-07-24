@@ -5,6 +5,7 @@ import os
 import re
 import html
 import threading
+import shutil
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 import pytz
@@ -40,7 +41,7 @@ class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def log_message(self, format, *args):
-        return  # কনসোলে ডামি সার্ভারের লগ বন্ধ রাখার জন্য
+        return
 
 def run_web_server():
     port = int(os.environ.get("PORT", 10000))
@@ -49,8 +50,8 @@ def run_web_server():
     server.serve_forever()
 
 # ==================== কনফিগারেশন ====================
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN")  # Render Environment Variable থেকে টোকেন নেবে
-ADMIN_ID = 8659434858  # আপনার আইডি
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN")
+ADMIN_ID =8212595643 #8659434858
 
 REQUIRED_GROUPS = [
     "https://t.me/STUDY_ROOM_OFFICIAL",
@@ -68,17 +69,142 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 DB_NAME = "study_room.db"
+BACKUP_DIR = "database_backups"
+
+# ==================== ডেটাবেজ ব্যাকআপ সিস্টেম ====================
+def ensure_backup_dir():
+    """ব্যাকআপ ডিরেক্টরি তৈরি করে"""
+    if not os.path.exists(BACKUP_DIR):
+        os.makedirs(BACKUP_DIR)
+        print(f"📁 Backup directory created: {BACKUP_DIR}")
+
+async def create_database_backup():
+    """ডেটাবেজের ব্যাকআপ তৈরি করে"""
+    try:
+        ensure_backup_dir()
+        
+        if not os.path.exists(DB_NAME):
+            print("❌ Database not found! No backup created.")
+            return None
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_file = os.path.join(BACKUP_DIR, f"study_room_backup_{timestamp}.db")
+        
+        shutil.copy2(DB_NAME, backup_file)
+        print(f"✅ Database backup created: {backup_file}")
+        
+        # সর্বশেষ ৫টি ব্যাকআপ রাখুন
+        keep_latest_backups(5)
+        
+        return backup_file
+    except Exception as e:
+        print(f"❌ Backup failed: {e}")
+        return None
+
+def keep_latest_backups(keep_count=5):
+    """সর্বশেষ কয়টি ব্যাকআপ রাখবে"""
+    try:
+        if not os.path.exists(BACKUP_DIR):
+            return
+        
+        backups = []
+        for f in os.listdir(BACKUP_DIR):
+            if f.startswith("study_room_backup_") and f.endswith(".db"):
+                file_path = os.path.join(BACKUP_DIR, f)
+                backups.append((os.path.getctime(file_path), file_path))
+        
+        backups.sort(reverse=True)
+        
+        for _, file_path in backups[keep_count:]:
+            os.remove(file_path)
+            print(f"🗑️ Old backup deleted: {os.path.basename(file_path)}")
+            
+    except Exception as e:
+        print(f"⚠️ Error cleaning backups: {e}")
+
+async def list_all_backups():
+    """সব ব্যাকআপের লিস্ট দেখায়"""
+    try:
+        if not os.path.exists(BACKUP_DIR):
+            return []
+        
+        backups = []
+        for f in os.listdir(BACKUP_DIR):
+            if f.startswith("study_room_backup_") and f.endswith(".db"):
+                file_path = os.path.join(BACKUP_DIR, f)
+                size = os.path.getsize(file_path) / 1024
+                created = datetime.fromtimestamp(os.path.getctime(file_path))
+                backups.append({
+                    'filename': f,
+                    'path': file_path,
+                    'size': round(size, 2),
+                    'created': created
+                })
+        
+        backups.sort(key=lambda x: x['created'], reverse=True)
+        return backups
+    except Exception as e:
+        print(f"❌ Error listing backups: {e}")
+        return []
+
+async def restore_database_from_backup(backup_filename):
+    """ব্যাকআপ থেকে ডেটাবেজ রিস্টোর করে"""
+    try:
+        backup_path = os.path.join(BACKUP_DIR, backup_filename)
+        
+        if not os.path.exists(backup_path):
+            print(f"❌ Backup file not found: {backup_filename}")
+            return False
+        
+        # রিস্টোরের আগে বর্তমান ডেটাবেজের ব্যাকআপ নিন
+        await create_database_backup()
+        
+        shutil.copy2(backup_path, DB_NAME)
+        print(f"✅ Database restored from: {backup_filename}")
+        return True
+    except Exception as e:
+        print(f"❌ Restore failed: {e}")
+        return False
 
 # ==================== ডেটাবেজ সেটআপ ====================
 async def init_db(application: Application):
+    """ডেটাবেজ ইনিশিয়ালাইজ করে"""
+    
+    # ব্যাকআপ নিন (যদি ডেটাবেজ থাকে)
+    if os.path.exists(DB_NAME):
+        await create_database_backup()
+        print("📦 Database backup created before initialization")
+    
+    # ডেটাবেজ চেক করুন
     if os.path.exists(DB_NAME):
         try:
             async with aiosqlite.connect(DB_NAME) as db:
                 await db.execute("SELECT platform FROM categories LIMIT 1")
-        except:
-            #os.remove(DB_NAME)
-            print("🔄 পুরোনো ডেটাবেজ রিফ্রেশ করা হয়েছে...")
+                print("✅ Existing database is valid")
+        except Exception as e:
+            print(f"⚠️ Database corrupted: {e}")
+            
+            # ব্যাকআপ থেকে রিস্টোর করার চেষ্টা
+            backups = await list_all_backups()
+            if backups:
+                latest_backup = backups[0]['filename']
+                print(f"🔄 Attempting to restore from latest backup: {latest_backup}")
+                
+                if await restore_database_from_backup(latest_backup):
+                    print("✅ Database restored successfully!")
+                    try:
+                        async with aiosqlite.connect(DB_NAME) as db:
+                            await db.execute("SELECT platform FROM categories LIMIT 1")
+                            return
+                    except:
+                        print("⚠️ Restored database also corrupted, creating fresh...")
+            
+            # ব্যাকআপ না থাকলে ডিলিট
+            if os.path.exists(DB_NAME):
+                os.remove(DB_NAME)
+                print("🗑️ Corrupted database deleted")
     
+    # নতুন ডেটাবেজ তৈরি
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute('''
             CREATE TABLE IF NOT EXISTS users (
@@ -174,7 +300,11 @@ async def init_db(application: Application):
                     )
         
         await db.commit()
-    print("✅ Database Initialized Successfully!")
+        print("✅ New database created successfully!")
+    
+    # নতুন ডেটাবেজের ব্যাকআপ নিন
+    await create_database_backup()
+    print("📦 Initial backup created")
 
 # ==================== হেল্পার ফাংশন ====================
 def get_bd_time_str():
@@ -198,7 +328,11 @@ async def is_user_joined(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> bo
         
         for (group_id,) in groups:
             try:
-                member = await context.bot.get_chat_member(chat_id=group_id, user_id=user_id)
+                clean_group_id = group_id.replace("@", "")
+                if not clean_group_id.startswith("@"):
+                    clean_group_id = "@" + clean_group_id
+                    
+                member = await context.bot.get_chat_member(chat_id=clean_group_id, user_id=user_id)
                 if member.status not in [ChatMember.MEMBER, ChatMember.ADMINISTRATOR, ChatMember.OWNER]:
                     return False
             except TelegramError:
@@ -256,9 +390,17 @@ def get_admin_main_keyboard():
     keyboard = [
         [KeyboardButton("📚 কোর্স ম্যানেজমেন্ট"), KeyboardButton("📁 ক্যাটাগরি ম্যানেজমেন্ট")],
         [KeyboardButton("👥 ইউজার ম্যানেজমেন্ট"), KeyboardButton("👑 সাব অ্যাডমিন")],
-        [KeyboardButton("📢 ব্রডকাস্ট"), KeyboardButton("🔙 ইউজার মোড")]
+        [KeyboardButton("📢 ব্রডকাস্ট"), KeyboardButton("📦 ব্যাকআপ ম্যানেজমেন্ট")],
+        [KeyboardButton("🔙 ইউজার মোড")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+def get_backup_keyboard():
+    return ReplyKeyboardMarkup([
+        ["📦 ব্যাকআপ নাও", "📋 ব্যাকআপ লিস্ট"],
+        ["🔄 ব্যাকআপ রিস্টোর"],
+        ["🔙 ব্যাক", "🏠 মেইন মেনু"]
+    ], resize_keyboard=True)
 
 def get_admin_courses_keyboard():
     return ReplyKeyboardMarkup([
@@ -310,8 +452,10 @@ async def get_categories_keyboard():
     keyboard = []
     row = []
     for cat_id, platform, subject, batch in categories:
-        display = f"{platform} {subject} {batch}"
-        row.append(KeyboardButton(f" {display}"))
+        display = f"{platform} {subject} {batch}".strip()
+        if not display:
+            display = f"ক্যাটাগরি {cat_id}"
+        row.append(KeyboardButton(f"{display}"))
         if len(row) == 2:
             keyboard.append(row)
             row = []
@@ -465,40 +609,56 @@ async def handle_text_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     elif text == "🛒 কোর্স কিনুন":
         keyboard = await get_categories_keyboard()
-        await update.message.reply_text("📚 <b>ক্যাটাগরি নির্বাচন করুন:</b>", reply_markup=keyboard, parse_mode="HTML")
+        await update.message.reply_text(
+            "📚 <b>ক্যাটাগরি নির্বাচন করুন:</b>\n\n"
+            "নিচের তালিকা থেকে আপনার পছন্দের ক্যাটাগরি নির্বাচন করুন:", 
+            reply_markup=keyboard, 
+            parse_mode="HTML"
+        )
         return
     elif text == "💬 সাপোর্ট":
         await update.message.reply_text("💬 <b>আপনার বার্তাটি লিখে পাঠান:</b>", parse_mode="HTML")
         context.user_data['state'] = 'support'
         return
-    elif text.startswith("📚 "):
-        cat_display = text.replace("📚 ", "").strip()
-        categories = await get_categories()
-        matched = False
-        for cat_id, platform, subject, batch in categories:
-            display = f"{platform} {subject} {batch}"
-            if display == cat_display:
-                context.user_data['selected_category'] = cat_id
-                keyboard = await get_courses_keyboard(cat_id)
-                await update.message.reply_text(f"📚 <b>{html.escape(display)}</b>\n\nএকটি কোর্স নির্বাচন করুন:", reply_markup=keyboard, parse_mode="HTML")
-                matched = True
-                break
-        if not matched:
-            keyboard = await get_categories_keyboard()
-            await update.message.reply_text("❌ ক্যাটাগরি পাওয়া যায়নি! অনুগ্রহ করে নিচের তালিকা থেকে আবার নির্বাচন করুন।", reply_markup=keyboard)
+    
+    # ক্যাটাগরি নির্বাচন
+    categories = await get_categories()
+    matched = False
+    for cat_id, platform, subject, batch in categories:
+        display = f"{platform} {subject} {batch}".strip()
+        if display == text:
+            context.user_data['selected_category'] = cat_id
+            keyboard = await get_courses_keyboard(cat_id)
+            await update.message.reply_text(
+                f"📚 <b>{html.escape(display)}</b>\n\nএকটি কোর্স নির্বাচন করুন:", 
+                reply_markup=keyboard, 
+                parse_mode="HTML"
+            )
+            matched = True
+            break
+    
+    if matched:
         return
-    elif text.startswith("📘 "):
+    
+    if text.startswith("📘 "):
         await handle_course_select(update, context)
         return
-    elif text == "🔙 ক্যাটাগরিতে ফিরুন":
+    
+    if text == "🔙 ক্যাটাগরিতে ফিরুন":
         keyboard = await get_categories_keyboard()
-        await update.message.reply_text("📚 <b>ক্যাটাগরি নির্বাচন করুন:</b>", reply_markup=keyboard, parse_mode="HTML")
+        await update.message.reply_text(
+            "📚 <b>ক্যাটাগরি নির্বাচন করুন:</b>\n\n"
+            "নিচের তালিকা থেকে আপনার পছন্দের ক্যাটাগরি নির্বাচন করুন:", 
+            reply_markup=keyboard, 
+            parse_mode="HTML"
+        )
         return
-    else:
-        if context.user_data.get('state') == 'support':
-            await handle_support(update, context)
-            return
-        await update.message.reply_text("❓ <b>অজানা কমান্ড!</b> মেনু থেকে নির্বাচন করুন।", parse_mode="HTML")
+    
+    if context.user_data.get('state') == 'support':
+        await handle_support(update, context)
+        return
+    
+    await update.message.reply_text("❓ <b>অজানা কমান্ড!</b> মেনু থেকে নির্বাচন করুন।", parse_mode="HTML")
 
 # ==================== ফটো হ্যান্ডলার ====================
 async def handle_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -868,6 +1028,53 @@ async def handle_admin_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         markup = get_sub_admin_super_keyboard() if await is_super_admin(user_id) else get_sub_admin_keyboard()
         await update.message.reply_text("👑 <b>সাব অ্যাডমিন প্যানেল</b>", reply_markup=markup, parse_mode="HTML")
         return
+    
+    elif text == "📦 ব্যাকআপ ম্যানেজমেন্ট":
+        await update.message.reply_text("📦 <b>ব্যাকআপ ম্যানেজমেন্ট</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+                                       "📌 এখান থেকে আপনি ডেটাবেজের ব্যাকআপ নিতে, দেখতে এবং রিস্টোর করতে পারবেন।",
+                                       reply_markup=get_backup_keyboard(), parse_mode="HTML")
+        return
+    
+    elif text == "📦 ব্যাকআপ নাও":
+        backup_file = await create_database_backup()
+        if backup_file:
+            await update.message.reply_text(
+                f"✅ <b>ব্যাকআপ তৈরি হয়েছে!</b>\n"
+                f"📁 ফাইল: <code>{os.path.basename(backup_file)}</code>\n"
+                f"📅 সময়: {get_bd_time_str()}",
+                parse_mode="HTML",
+                reply_markup=get_backup_keyboard()
+            )
+        else:
+            await update.message.reply_text("❌ ব্যাকআপ তৈরি ব্যর্থ!", reply_markup=get_backup_keyboard())
+        return
+    
+    elif text == "📋 ব্যাকআপ লিস্ট":
+        backups = await list_all_backups()
+        if not backups:
+            await update.message.reply_text("📂 কোনো ব্যাকআপ পাওয়া যায়নি!", reply_markup=get_backup_keyboard())
+            return
+        
+        msg = "📋 <b>সকল ব্যাকআপ</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+        for idx, b in enumerate(backups, 1):
+            msg += f"{idx}. <code>{b['filename']}</code>\n"
+            msg += f"   📅 {b['created'].strftime('%Y-%m-%d %H:%M:%S')}\n"
+            msg += f"   📦 {b['size']} KB\n\n"
+        
+        await update.message.reply_text(msg, parse_mode="HTML", reply_markup=get_backup_keyboard())
+        return
+    
+    elif text == "🔄 ব্যাকআপ রিস্টোর":
+        await update.message.reply_text(
+            "🔄 <b>ব্যাকআপ রিস্টোর</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+            "আপনি যে ব্যাকআপটি রিস্টোর করতে চান তার পুরো নাম লিখুন:\n"
+            "যেমন: <code>study_room_backup_20260124_120000.db</code>\n\n"
+            "📌 <b>সাবধান:</b> রিস্টোর করলে বর্তমান ডেটা পরিবর্তন হবে!",
+            reply_markup=get_cancel_keyboard(),
+            parse_mode="HTML"
+        )
+        context.user_data['admin_state'] = 'restore_backup'
+        return
 
     elif text == "📋 সকল সাইকেল":
         await show_all_admin_cycles(update, context)
@@ -975,6 +1182,58 @@ async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     elif state == 'waiting_for_broadcast_text':
         photo_id = context.user_data.get('broadcast_photo_id')
         await broadcast_message(update, context, text, photo_id)
+    elif state == 'restore_backup':
+        await handle_restore_backup(update, context, text)
+
+# ==================== ব্যাকআপ রিস্টোর হ্যান্ডলার ====================
+async def handle_restore_backup(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
+    """ব্যাকআপ রিস্টোর করার ফাংশন"""
+    if text == "❌ বাতিল":
+        context.user_data['admin_state'] = None
+        await update.message.reply_text("✅ বাতিল করা হয়েছে!", reply_markup=get_admin_main_keyboard())
+        return
+    
+    backup_filename = text.strip()
+    
+    # চেক করুন ফাইল আছে কিনা
+    backups = await list_all_backups()
+    found = False
+    for b in backups:
+        if b['filename'] == backup_filename:
+            found = True
+            break
+    
+    if not found:
+        await update.message.reply_text(
+            f"❌ <code>{backup_filename}</code> নামে কোনো ব্যাকআপ পাওয়া যায়নি!\n\n"
+            f"সঠিক নাম লিখুন অথবা '📋 ব্যাকআপ লিস্ট' থেকে দেখে নিন।",
+            parse_mode="HTML",
+            reply_markup=get_backup_keyboard()
+        )
+        return
+    
+    # রিস্টোর করুন
+    success = await restore_database_from_backup(backup_filename)
+    
+    if success:
+        await update.message.reply_text(
+            f"✅ <b>ব্যাকআপ রিস্টোর সফল!</b>\n━━━━━━━━━━━━━━━━━━\n\n"
+            f"📁 ফাইল: <code>{backup_filename}</code>\n"
+            f"📅 সময়: {get_bd_time_str()}\n\n"
+            f"⚠️ বর্তমান ডেটা এই ব্যাকআপ দ্বারা প্রতিস্থাপিত হয়েছে।",
+            parse_mode="HTML",
+            reply_markup=get_backup_keyboard()
+        )
+    else:
+        await update.message.reply_text(
+            f"❌ <b>ব্যাকআপ রিস্টোর ব্যর্থ!</b>\n\n"
+            f"📁 ফাইল: <code>{backup_filename}</code>\n"
+            f"দয়া করে আবার চেষ্টা করুন।",
+            parse_mode="HTML",
+            reply_markup=get_backup_keyboard()
+        )
+    
+    context.user_data['admin_state'] = None
 
 # ==================== ইউজারের বিস্তারিত তথ্য দেখার ফাংশন ====================
 async def search_user_details(update: Update, context: ContextTypes.DEFAULT_TYPE, search_term: str):
@@ -1051,7 +1310,8 @@ async def show_recent_purchases(update: Update, context: ContextTypes.DEFAULT_TY
     for name, uid, plat, subj, batch, cyc, pdate in rows:
         try:
             dt_obj = datetime.strptime(pdate, "%Y-%m-%d %H:%M:%S")
-            bd_formatted_time = dt_obj.strftime("%Y-%m-%d %I:%M %p")
+            bd_time = dt_obj.replace(tzinfo=pytz.UTC).astimezone(BD_TZ)
+            bd_formatted_time = bd_time.strftime("%Y-%m-%d %I:%M %p")
         except:
             bd_formatted_time = pdate
             
@@ -1261,6 +1521,14 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     await update.message.reply_text(f"✅ {sent} জনের কাছে বার্তা পাঠানো হয়েছে!", reply_markup=get_admin_main_keyboard())
     context.user_data['admin_state'] = None
 
+# ==================== অটো ব্যাকআপ লুপ ====================
+async def auto_backup_loop():
+    """প্রতি ৬ ঘণ্টা পর পর ব্যাকআপ নেয়"""
+    while True:
+        await asyncio.sleep(21600)  # ৬ ঘণ্টা
+        await create_database_backup()
+        print("🔄 Auto backup completed")
+
 # ==================== মূল প্রোগ্রাম (MAIN) ====================
 def main():
     # 🌐 Background Web Server
@@ -1283,6 +1551,9 @@ def main():
     app.add_handler(ChatJoinRequestHandler(auto_approve_join_request))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photos))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_buttons))
+    
+    # 🔥 অটো ব্যাকআপ লুপ শুরু করুন
+    asyncio.create_task(auto_backup_loop())
     
     print("🚀 Study Room Bot Started Successfully!")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
