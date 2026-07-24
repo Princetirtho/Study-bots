@@ -50,7 +50,7 @@ def run_web_server():
 
 # ==================== কনফিগারেশন ====================
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN")  # Render Environment Variable থেকে টোকেন নেবে
-ADMIN_ID = 8212595643  # আপনার আইডি
+ADMIN_ID = 8659434858  # আপনার আইডি
 
 REQUIRED_GROUPS = [
     "https://t.me/STUDY_ROOM_OFFICIAL",
