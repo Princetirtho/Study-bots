@@ -311,7 +311,7 @@ async def get_categories_keyboard():
     row = []
     for cat_id, platform, subject, batch in categories:
         display = f"{platform} {subject} {batch}"
-        row.append(KeyboardButton(f"📚 {display}"))
+        row.append(KeyboardButton(f" {display}"))
         if len(row) == 2:
             keyboard.append(row)
             row = []
@@ -1063,7 +1063,7 @@ async def add_category(update: Update, context: ContextTypes.DEFAULT_TYPE, text:
         parts = [p.strip() for p in text.split("|")]
         if len(parts) >= 3:
             async with aiosqlite.connect(DB_NAME) as db:
-                await db.execute("INSERT INTO categories (platform, subject, batch) VALUES (?, ?, ?)", (parts[0].upper(), parts[1].capitalize(), parts[2]))
+                await db.execute("INSERT INTO categories (platform, subject, batch) VALUES (?, ?, ?)", (parts[0].upper(), parts[1].upper(), parts[2]))
                 await db.commit()
             await update.message.reply_text("✅ ক্যাটাগরি যোগ হয়েছে!", reply_markup=get_admin_categories_keyboard())
             context.user_data['admin_state'] = None
@@ -1077,7 +1077,7 @@ async def bulk_add_categories(update: Update, context: ContextTypes.DEFAULT_TYPE
         for line in lines:
             parts = [p.strip() for p in line.split("|")]
             if len(parts) >= 3:
-                await db.execute("INSERT INTO categories (platform, subject, batch) VALUES (?, ?, ?)", (parts[0].upper(), parts[1].capitalize(), parts[2]))
+                await db.execute("INSERT INTO categories (platform, subject, batch) VALUES (?, ?, ?)", (parts[0].upper(), parts[1].upper(), parts[2]))
                 added += 1
         await db.commit()
     await update.message.reply_text(f"✅ {added} টি ক্যাটাগরি যোগ হয়েছে!", reply_markup=get_admin_categories_keyboard())
